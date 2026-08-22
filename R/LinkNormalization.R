@@ -86,11 +86,11 @@ LinkNormalization<-function(links, current){
 
             # if sarts with subdomain
             } else if(substr(links[t],1,7)!="http://" && substr(links[t],1,8)!="https://" && substr(links[t],1,3)!="www"
-                      && grepl( pattern = paste0("[A-Za-z]*",gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", paste0(".",base2),".*")), x = links[t], ignore.case = TRUE)){
+                      && grepl( pattern = paste0("[A-Za-z]*",gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", paste0(".",base2)),".*"), x = links[t], ignore.case = TRUE)){
               links[t]<-paste0(protocole,"//",links[t])
               # if relative
             } else if(substr(links[t],1,7)!="http://" && substr(links[t],1,8)!="https://" && substr(links[t],1,3)!="www"
-                      && !grepl( pattern = paste0(".*",gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1",base2,".*")), x = links[t], ignore.case = TRUE) ){
+                      && !grepl( pattern = paste0(".*",gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1",base2),".*"), x = links[t], ignore.case = TRUE) ){
               if(substring(current, nchar(current)) == "/"){
                 links[t]<-paste0(current,links[t])
                 # si non
