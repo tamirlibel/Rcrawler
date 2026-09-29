@@ -1,15 +1,42 @@
-#' Crawler settings. Set `contact` to an email or URL so site operators can
-#' reach you; it is added to the User-Agent string.
-ns_config <- function(data_dir = ns_path("data"),
+#' Crawler settings
+#'
+#' @param data_dir directory where the corpus, visited-URL log, raw pages and
+#'   run summaries are stored. Created if needed.
+#' @param contact an email address or URL added to the User-Agent so site
+#'   operators can reach you. Defaults to the `NATOSPEECH_CONTACT` environment
+#'   variable.
+#' @param delay minimum seconds between requests to the same host.
+#' @param timeout request timeout in seconds.
+#' @param retries attempts per request (with exponential backoff on network
+#'   errors, HTTP 429 and 5xx).
+#' @param obey_robots respect robots.txt (strongly recommended).
+#' @param cache_html keep a gzipped copy of every saved speech page (and the
+#'   original PDF for PDF speeches) under `data_dir/raw`.
+#' @param pdf follow links to PDF files and extract their text. Requires the
+#'   \pkg{pdftools} package.
+#' @param fetcher function `(url, cfg)` returning
+#'   `list(url, status, content_type, body, raw)` or `NULL` on failure.
+#'   Defaults to [http_fetch()]; see [chromote_fetcher()] for pages that are
+#'   built by JavaScript.
+#' @return a settings list used by the other functions.
+#' @export
+#' @examples
+#' cfg <- ns_config(data_dir = tempfile(), contact = "me@example.org", delay = 5)
+#' cfg$user_agent
+ns_config <- function(data_dir = "natospeech_data",
                       contact = Sys.getenv("NATOSPEECH_CONTACT", ""),
                       delay = 3, timeout = 30, retries = 3,
                       obey_robots = TRUE, cache_html = TRUE,
+                      pdf = requireNamespace("pdftools", quietly = TRUE),
                       fetcher = NULL) {
-  ua <- paste0("NatoSpeechCollector/0.1 (research; R/Rcrawler",
+  if (pdf && !requireNamespace("pdftools", quietly = TRUE)) {
+    stop("pdf = TRUE needs the pdftools package: install.packages('pdftools')")
+  }
+  ua <- paste0("natospeeches/", utils::packageVersion("natospeeches"), " (research crawler",
                if (nzchar(contact)) paste0("; contact: ", contact), ")")
   list(data_dir = data_dir, user_agent = ua, delay = delay, timeout = timeout,
        retries = retries, obey_robots = obey_robots, cache_html = cache_html,
-       fetcher = fetcher %||% http_fetch)
+       pdf = pdf, fetcher = fetcher %||% http_fetch)
 }
 
 # Per-session state: last request time per host and parsed robots.txt per host.
@@ -17,8 +44,28 @@ ns_config <- function(data_dir = ns_path("data"),
 .ns_state$last_hit <- list()
 .ns_state$robots <- list()
 
-#' Default fetcher: GET with retries/backoff. Returns
-#' list(url, status, content_type, body) or NULL on network failure.
+#' Reset per-session crawler state
+#'
+#' Forgets cached robots.txt rules and per-host request times, e.g. after
+#' editing a site's robots.txt handling or in tests.
+#' @return `NULL`, invisibly.
+#' @export
+reset_crawler_state <- function() {
+  .ns_state$last_hit <- list()
+  .ns_state$robots <- list()
+  invisible(NULL)
+}
+
+#' Fetch a URL over HTTP
+#'
+#' The default fetcher: an HTTP GET with retries and exponential backoff.
+#' Text responses are decoded into `body`; PDFs are returned as bytes in `raw`.
+#'
+#' @param url URL to fetch.
+#' @param cfg settings from [ns_config()].
+#' @return `list(url, status, content_type, body, raw)`, where `url` is the
+#'   final URL after redirects, or `NULL` if every attempt failed.
+#' @export
 http_fetch <- function(url, cfg) {
   for (attempt in seq_len(cfg$retries)) {
     res <- tryCatch(
@@ -31,15 +78,60 @@ http_fetch <- function(url, cfg) {
       status <- httr::status_code(res)
       if (!(status == 429 || status >= 500)) {
         type <- httr::headers(res)[["content-type"]] %||% ""
-        body <- if (grepl("html|xml|json|text", type, ignore.case = TRUE) || !nzchar(type))
-          httr::content(res, as = "text", encoding = guess_encoding(res)) else NA_character_
-        return(list(url = res$url, status = status, content_type = type, body = body))
+        is_text <- grepl("html|xml|json|text", type, ignore.case = TRUE) || !nzchar(type)
+        body <- if (is_text) httr::content(res, as = "text", encoding = guess_encoding(res)) else NA_character_
+        raw <- if (grepl("pdf", type, ignore.case = TRUE)) httr::content(res, as = "raw") else NULL
+        return(list(url = res$url, status = status, content_type = type, body = body, raw = raw))
       }
       ns_log("HTTP ", status, " (attempt ", attempt, "): ", url, level = "WARN")
     }
     if (attempt < cfg$retries) Sys.sleep(cfg$delay * 2^attempt)
   }
   NULL
+}
+
+#' Fetcher for pages built by JavaScript
+#'
+#' Returns a fetcher that loads pages in headless Chrome through
+#' \pkg{chromote} and returns the rendered HTML. Use it for sources flagged
+#' `js_required` in the registry. It needs the \pkg{chromote} package and a
+#' local Chrome or Chromium installation. Non-HTML URLs (robots.txt, PDFs,
+#' JSON APIs) are still fetched with [http_fetch()].
+#'
+#' Headless browsers do not expose the HTTP status code, so any page that
+#' loads is reported as status 200.
+#'
+#' @param wait seconds to wait after the load event for scripts to finish
+#'   rendering content.
+#' @return a function `(url, cfg)` for the `fetcher` argument of [ns_config()].
+#' @export
+#' @examples
+#' \dontrun{
+#' cfg <- ns_config(fetcher = chromote_fetcher())
+#' collect_speeches(ids = "CAN_mod", include_js = TRUE, cfg = cfg)
+#' }
+chromote_fetcher <- function(wait = 2) {
+  if (!requireNamespace("chromote", quietly = TRUE)) {
+    stop("chromote_fetcher() needs the chromote package: install.packages('chromote')")
+  }
+  session <- NULL
+  function(url, cfg) {
+    if (grepl("(robots\\.txt|\\.pdf|\\.json|/api/)([?#].*)?$", url, ignore.case = TRUE)) return(http_fetch(url, cfg))
+    tryCatch({
+      if (is.null(session)) session <<- chromote::ChromoteSession$new()
+      session$Network$setUserAgentOverride(userAgent = cfg$user_agent)
+      loaded <- session$Page$loadEventFired(wait_ = FALSE)
+      session$Page$navigate(url, wait_ = FALSE)
+      session$wait_for(loaded)
+      Sys.sleep(wait)
+      html <- session$Runtime$evaluate("document.documentElement.outerHTML")$result$value
+      final <- session$Runtime$evaluate("window.location.href")$result$value
+      list(url = final %||% url, status = 200L, content_type = "text/html", body = html, raw = NULL)
+    }, error = function(e) {
+      ns_log("browser fetch failed: ", url, " - ", conditionMessage(e), level = "WARN")
+      NULL
+    })
+  }
 }
 
 guess_encoding <- function(res) {
@@ -53,7 +145,7 @@ guess_encoding <- function(res) {
   "UTF-8"
 }
 
-#' Polite fetch: robots.txt check, per-host throttling, then the configured fetcher.
+# Polite fetch: robots.txt check, per-host throttling, then the configured fetcher.
 polite_get <- function(url, cfg) {
   host <- url_host(url)
   if (cfg$obey_robots && !robots_allowed(url, cfg)) {
@@ -81,13 +173,13 @@ robots_allowed <- function(url, cfg) {
     robots_url <- paste0(scheme, "://", host, "/robots.txt")
     res <- cfg$fetcher(robots_url, cfg)
     txt <- if (!is.null(res) && identical(as.integer(res$status), 200L) && !is.na(res$body)) res$body else ""
-    rules <- parse_robots(txt, agent = "NatoSpeechCollector")
+    rules <- parse_robots(txt, agent = "natospeeches")
     .ns_state$robots[[host]] <- rules
   }
   robots_path_allowed(rules, url_path(url))
 }
 
-#' Parse robots.txt into allow/disallow patterns for `agent` (falling back to `*`).
+# Parse robots.txt into allow/disallow patterns for `agent` (falling back to `*`).
 parse_robots <- function(txt, agent) {
   lines <- sub("#.*$", "", strsplit(txt, "\r?\n")[[1]] %||% character())
   lines <- trimws(lines)

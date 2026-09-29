@@ -1,3 +1,5 @@
+options(natospeech.quiet = TRUE)
+
 fixture <- function(name) paste(readLines(test_path("fixtures", name), encoding = "UTF-8", warn = FALSE), collapse = "\n")
 
 src_row <- function(...) {
@@ -10,12 +12,14 @@ src_row <- function(...) {
   modifyList(s, list(...))
 }
 
-# A fake website: named list of url -> body. Unknown URLs return 404.
+# A fake website: named list of url -> body (a string, or a raw vector for
+# PDFs). Unknown URLs return 404.
 mock_fetcher <- function(pages) {
   force(pages)
   function(url, cfg) {
     body <- pages[[url]]
     if (is.null(body)) return(list(url = url, status = 404L, content_type = "text/html", body = ""))
+    if (is.raw(body)) return(list(url = url, status = 200L, content_type = "application/pdf", body = NA_character_, raw = body))
     list(url = url, status = 200L, content_type = "text/html", body = body)
   }
 }

@@ -26,3 +26,10 @@ test_that("RSS items are parsed", {
   expect_equal(links$url, "https://x.de/rede-1")
   expect_equal(parse_date_string(links$listed_date), "2025-06-03")
 })
+
+test_that("a listing without article links yields an empty data.frame", {
+  links <- parse_listing_html("<html><body><main><a href='/'>Home</a></main></body></html>",
+                              "https://x.org/news", src_row())
+  expect_equal(nrow(links), 0)
+  expect_named(links, c("url", "link_text", "listed_date"))
+})

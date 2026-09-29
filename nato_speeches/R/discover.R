@@ -1,9 +1,10 @@
-NS_ASSET_RX <- "\\.(jpe?g|png|gif|svg|webp|css|js|ico|mp[34]|zip|pdf|docx?|xlsx?|pptx?)([?#].*)?$"
+NS_ASSET_RX <- "\\.(jpe?g|png|gif|svg|webp|css|js|ico|mp[34]|zip|docx?|xlsx?|pptx?)([?#].*)?$"
+NS_PDF_RX <- "\\.pdf([?#].*)?$"
 NS_NONARTICLE_RX <- paste0("(?i)(/tag/|/tags/|/category/|/search|/login|/contact|/sitemap|/privacy|",
                            "/cookie|/rss|/feed|/newsletter|mailto:|tel:|javascript:|/print/)")
 
-#' Collect candidate speech URLs from all listing pages of a source.
-#' Returns data.frame(url, link_text, listed_date).
+# Collect candidate speech URLs from all listing pages of a source.
+# Returns data.frame(url, link_text, listed_date).
 discover_links <- function(source, cfg, max_pages = NULL) {
   pages <- min(source$max_pages, max_pages %||% source$max_pages)
   out <- data.frame(url = character(), link_text = character(), listed_date = character())
@@ -14,10 +15,7 @@ discover_links <- function(source, cfg, max_pages = NULL) {
       ns_log(source$source_id, ": listing page ", p, " unavailable (status ", res$status %||% "none", ")", level = "WARN")
       break
     }
-    links <- switch(source$type,
-      html = parse_listing_html(res$body, res$url %||% page_url, source),
-      rss = parse_listing_rss(res$body),
-      govuk_api = parse_listing_govuk(res$body))
+    links <- parse_listing(source, res, page_url, cfg)
     links <- links[!links$url %in% out$url, , drop = FALSE]
     if (!nrow(links)) break   # pagination exhausted or template wrong
     out <- rbind(out, links)
@@ -25,7 +23,15 @@ discover_links <- function(source, cfg, max_pages = NULL) {
   out
 }
 
-parse_listing_html <- function(html, base_url, source) {
+parse_listing <- function(source, res, page_url, cfg) {
+  switch(source$type,
+    html = parse_listing_html(res$body, res$url %||% page_url, source, keep_pdf = isTRUE(cfg$pdf)),
+    rss = parse_listing_rss(res$body),
+    govuk_api = parse_listing_govuk(res$body),
+    stop("unknown source type: ", source$type))
+}
+
+parse_listing_html <- function(html, base_url, source, keep_pdf = FALSE) {
   doc <- xml2::read_html(html)
   xml2::xml_remove(xml2::xml_find_all(doc, "//nav | //header | //footer | //*[@role='navigation' or @role='banner' or @role='contentinfo']"))
   a <- xml2::xml_find_all(doc, "//a[@href]")
@@ -34,13 +40,14 @@ parse_listing_html <- function(html, base_url, source) {
   url <- sub("#.*$", "", xml2::url_absolute(href, base_url))
   keep <- grepl("^https?://", url) & same_site(url, base_url) &
     !grepl(NS_ASSET_RX, url, ignore.case = TRUE) & !grepl(NS_NONARTICLE_RX, url, perl = TRUE) &
+    (keep_pdf | !grepl(NS_PDF_RX, url, ignore.case = TRUE)) &
     sub("/$", "", url) != sub("/$", "", base_url)
   if (!ns_blank(source$link_regex)) {
     keep <- keep & grepl(source$link_regex, url, perl = TRUE)
   } else {
-    keep <- keep & looks_like_article(url)
+    keep <- keep & (looks_like_article(url) | grepl(NS_PDF_RX, url, ignore.case = TRUE))
   }
-  df <- data.frame(url = url[keep], link_text = text[keep], listed_date = NA_character_)
+  df <- data.frame(url = url[keep], link_text = text[keep], listed_date = rep(NA_character_, sum(keep)))
   # Prefer the longest anchor text when the same URL is linked several times.
   df <- df[order(-nchar(df$link_text)), , drop = FALSE]
   df[!duplicated(df$url), , drop = FALSE]

@@ -1,0 +1,32 @@
+Package: natospeeches
+Type: Package
+Title: Collect Speeches by NATO Leaders, Defence and Foreign Ministers, and Chiefs of Defence
+Version: 0.1.0
+Authors@R: person("Tamir", "Libel", email = "tamirlibelphd@gmail.com", role = c("aut", "cre"))
+Description: Collects speeches from official websites of the 32 NATO member
+    states for four offices: head of state, minister of defence, minister of
+    foreign affairs, and chief of defence. A bundled, editable registry maps
+    each country and office to its speech listing. The crawler respects
+    robots.txt, throttles requests per host, filters speeches by keyword in
+    28 languages, extracts title, date and text from HTML or PDF, and stores
+    results incrementally so repeated runs fetch only new speeches.
+License: GPL (>= 2)
+Encoding: UTF-8
+Depends: R (>= 4.1.0)
+Imports:
+    digest,
+    httr,
+    jsonlite,
+    stats,
+    utils,
+    xml2
+Suggests:
+    graphics,
+    grDevices,
+    chromote,
+    pdftools,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+URL: https://github.com/tamirlibel/Rcrawler/tree/master/nato_speeches

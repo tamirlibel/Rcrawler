@@ -7,9 +7,7 @@ ns_log <- function(..., level = "INFO") {
   message(sprintf("[%s] %-5s %s", format(Sys.time(), "%H:%M:%S"), level, paste0(...)))
 }
 
-ns_root <- function() getOption("natospeech.root", default = ".")
 
-ns_path <- function(...) file.path(ns_root(), ...)
 
 ns_hash <- function(x) vapply(x, digest::digest, character(1), algo = "md5", serialize = FALSE, USE.NAMES = FALSE)
 

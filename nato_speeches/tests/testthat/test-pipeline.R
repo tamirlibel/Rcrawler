@@ -16,8 +16,8 @@ test_that("end-to-end collection with a mock site, incremental re-runs", {
   calls <- character()
   fetch <- mock_fetcher(site)
   counting <- function(url, cfg) { calls <<- c(calls, url); fetch(url, cfg) }
-  cfg <- ns_config(data_dir = dir, delay = 0, fetcher = counting)
-  .ns_state$robots <- list(); .ns_state$last_hit <- list()
+  cfg <- ns_config(data_dir = dir, delay = 0, pdf = FALSE, fetcher = counting)
+  reset_crawler_state()
 
   srcs <- as.data.frame(rbind(
     src_row(source_id = "TST_mod", speaker_regex = "Minister of Defence"),
@@ -53,8 +53,8 @@ test_that("since filter and robots disallow are respected", {
   dir <- tempfile("ns_data")
   site <- make_site()
   site[["https://mod.example.org/robots.txt"]] <- "User-agent: *\nDisallow: /news/speeches/chief"
-  cfg <- ns_config(data_dir = dir, delay = 0, fetcher = mock_fetcher(site))
-  .ns_state$robots <- list(); .ns_state$last_hit <- list()
+  cfg <- ns_config(data_dir = dir, delay = 0, pdf = FALSE, fetcher = mock_fetcher(site))
+  reset_crawler_state()
   srcs <- as.data.frame(src_row(source_id = "TST_all")); srcs[] <- lapply(srcs, unlist)
   s <- collect_speeches(cfg = cfg, sources = srcs, since = "2025-07-01")
   expect_equal(s$saved, 0L)
@@ -65,8 +65,8 @@ test_that("since filter and robots disallow are respected", {
 })
 
 test_that("check_sources reports verdicts", {
-  cfg <- ns_config(data_dir = tempfile(), delay = 0, fetcher = mock_fetcher(make_site()))
-  .ns_state$robots <- list(); .ns_state$last_hit <- list()
+  cfg <- ns_config(data_dir = tempfile(), delay = 0, pdf = FALSE, fetcher = mock_fetcher(make_site()))
+  reset_crawler_state()
   srcs <- as.data.frame(rbind(src_row(source_id = "OK_1"),
                               src_row(source_id = "BAD_1", listing_url = "https://mod.example.org/gone")))
   srcs[] <- lapply(srcs, unlist)
